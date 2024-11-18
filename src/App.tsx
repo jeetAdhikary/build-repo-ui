@@ -1,18 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Terminal, GitBranch, Globe } from 'lucide-react';
-import io, { Socket } from 'socket.io-client';
+import { io, Socket } from 'socket.io-client';
 
 interface OutputMessage {
   id: number;
   text: string;
   type: 'stdout' | 'stderr' | 'system' | 'success' | 'error';
+  isProgress?: boolean;
+  replaceLast?: boolean;
 }
 
 interface SocketMessage {
   commandId: string;
   output?: string;
-  type?: string;
+  outputType?: string;
   exitCode?: number;
+  isProgress?: boolean;
+  replaceLast?: boolean;
 }
 
 interface ApiResponse {
@@ -31,16 +35,25 @@ const CommandRunner: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const outputRef = useRef<HTMLDivElement>(null);
-  const socketRef = useRef<Socket | null>(null);
+  const socketRef = useRef<Socket>(null);
+
+  // Custom findLastIndex implementation
+  const findLastIndex = <T,>(array: T[], predicate: (value: T) => boolean): number => {
+    for (let i = array.length - 1; i >= 0; i--) {
+      if (predicate(array[i])) {
+        return i;
+      }
+    }
+    return -1;
+  };
 
   useEffect(() => {
     // Initialize Socket.IO connection
     socketRef.current = io('http://localhost:5001', {
-      withCredentials: true,
-      transports: ['websocket']
+      withCredentials: true
     });
 
-    // Socket event listeners
+    // Socket.IO event listeners
     socketRef.current.on('connect', () => {
       console.log('Connected to Socket.IO server');
       setIsConnected(true);
@@ -53,11 +66,27 @@ const CommandRunner: React.FC = () => {
 
     socketRef.current.on('commandOutput', (data: SocketMessage) => {
       if (data.output) {
-        setOutput(prev => [...prev, {
-          id: Date.now(),
-          text: data.output,
-          type: (data.type as OutputMessage['type']) || 'stdout'
-        }]);
+        setOutput(prev => {
+          const newOutput = [...prev];
+          const outputMessage: OutputMessage = {
+            id: Date.now(),
+            text: data.output || '',
+            type: (data.outputType as OutputMessage['type']) || 'stdout',
+            isProgress: data.isProgress,
+            replaceLast: data.replaceLast
+          };
+
+          // Handle progress updates
+          if (data.isProgress && data.replaceLast) {
+            const lastProgressIndex = findLastIndex(newOutput, msg => msg.isProgress);
+            if (lastProgressIndex !== -1) {
+              newOutput[lastProgressIndex] = outputMessage;
+              return newOutput;
+            }
+          }
+
+          return [...newOutput, outputMessage];
+        });
       }
     });
 
